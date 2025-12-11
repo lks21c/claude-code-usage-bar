@@ -287,10 +287,11 @@ class ClaudeStatusLine
     daily_pct = ((daily_tokens.to_f / daily_limit) * 100).round(1)
     weekly_pct = ((weekly_tokens.to_f / weekly_limit) * 100).round(1)
 
+    # Reset time is 21:00 KST (UTC 12:00)
     {
       daily: "D:#{daily_pct}%",
       weekly: "W:#{weekly_pct}%",
-      reset_time: "@00:00"
+      reset_time: "@21:00"
     }
   end
 
