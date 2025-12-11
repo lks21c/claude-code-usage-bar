@@ -287,14 +287,17 @@ class ClaudeStatusLine
     daily_pct = ((daily_tokens.to_f / daily_limit) * 100).round(1)
     weekly_pct = ((weekly_tokens.to_f / weekly_limit) * 100).round(1)
 
-    # Reset time is midnight local time
+    # Calculate remaining time until midnight reset
     tomorrow = Date.today + 1
     reset_time = Time.new(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0)
+    remaining_seconds = (reset_time - now).to_i
+    remaining_hours = remaining_seconds / 3600
+    remaining_minutes = (remaining_seconds % 3600) / 60
 
     {
       daily: "D:#{daily_pct}%",
       weekly: "W:#{weekly_pct}%",
-      reset_time: "→#{reset_time.strftime("%H:%M")}"
+      reset_time: "#{remaining_hours}h#{remaining_minutes}m"
     }
   end
 
@@ -372,13 +375,15 @@ class ClaudeStatusLine
       cache_creation = extract_token_field(source, %w[cache_creation_tokens cache_creation_input_tokens cacheCreationInputTokens])
       cache_read = extract_token_field(source, %w[cache_read_input_tokens cache_read_tokens cacheReadInputTokens])
 
-      if input > 0 || output > 0
+      if input > 0 || output > 0 || cache_creation > 0 || cache_read > 0
+        # Total tokens should include cache tokens as they count towards usage limits
+        total = input + output + cache_creation + cache_read
         tokens.merge!({
           input_tokens: input,
           output_tokens: output,
           cache_creation_tokens: cache_creation,
           cache_read_tokens: cache_read,
-          total_tokens: input + output
+          total_tokens: total
         })
         break
       end
