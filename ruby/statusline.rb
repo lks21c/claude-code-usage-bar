@@ -5,11 +5,7 @@ require 'json'
 require 'date'
 require 'set'
 
-# DEBUG with
-# echo '{"workspace": {"current_dir": "/Users/gdehan/.claude/utils/local-tts"}, "model": {"display_name": "Claude 4.1 Opus"}, "session_id": "test"}' | env CLAUDE_STATUS_DISPLAY_MODE=text CLAUDE_STATUS_PLAN=pro CLAUDE_STATUS_INFO_MODE=text ruby ./statusline.rb
-
-# Claude Code Status Line - Clean, minimal, and precise
-# Matches Claude Monitor's token calculation logic exactly
+# Claude Code Status Line - Daily and Weekly Token Usage
 #
 # Environment Variables:
 #   CLAUDE_STATUS_DISPLAY_MODE - Display style: minimal, colors (default), or background
@@ -20,36 +16,29 @@ class ClaudeStatusLine
   DEFAULT_DISPLAY_MODE = :colors
   DEFAULT_INFO_MODE = :none
 
-  # Constants
-  SESSION_DURATION_HOURS = 5
-
   # Emoji mappings for info mode
   EMOJIS = {
     directory: "📁",
     git: "🔀",
     model: "🦾",
-    tokens: "📓",
-    messages: "✏️",
-    time: "⏱️"
+    daily: "",
+    weekly: "",
+    time: ""
   }.freeze
 
-  # Plan limits mapping (from Claude Monitor's plans.py)
+  # Plan limits mapping - daily token limits
   PLAN_LIMITS = {
-    'pro' => { tokens: 19_000, messages: 250 },         # Pro plan
-    'max5' => { tokens: 88_000, messages: 1_000 },      # Max5 plan
-    'max20' => { tokens: 220_000, messages: 2_000 },    # Max20 plan
-    'custom' => { tokens: 44_000, messages: 250 },      # Custom plan
-
-    # Aliases and variations
-    'max' => { tokens: 88_000, messages: 1_000 },       # Alias for max5
+    'pro' => { daily_tokens: 45_000_000 },
+    'max5' => { daily_tokens: 225_000_000 },
+    'max20' => { daily_tokens: 900_000_000 },
+    'custom' => { daily_tokens: 45_000_000 },
+    'max' => { daily_tokens: 225_000_000 },
   }.freeze
 
   def self.detect_plan
-    # Check environment variables first (multiple options for flexibility)
     plan_from_env = ENV['CLAUDE_STATUS_PLAN'] || ENV['CLAUDE_PLAN'] || ENV['CLAUDE_CODE_PLAN']
     return plan_from_env if plan_from_env && PLAN_LIMITS.key?(plan_from_env)
 
-    # Check settings.json
     settings_file = File.expand_path('~/.claude/settings.json')
     if File.exist?(settings_file)
       begin
@@ -57,36 +46,35 @@ class ClaudeStatusLine
         plan_from_settings = settings['model']
         return plan_from_settings if plan_from_settings && PLAN_LIMITS.key?(plan_from_settings)
       rescue JSON::ParserError, Errno::ENOENT
-        # Continue to fallback
       end
     end
 
-    'max' # Default to max plan
+    'max5'
   end
 
   def self.get_limits(plan = nil)
     plan ||= detect_plan
-    PLAN_LIMITS[plan] || PLAN_LIMITS['max']
+    PLAN_LIMITS[plan] || PLAN_LIMITS['max5']
   end
 
   # Color schemes
   COLOR_SCHEMES = {
     colors: {
-      directory: "\033[38;5;51m",    # Soft sky blue
-      model: "\033[38;5;105m",        # Soft pink/magenta
-      tokens: "\033[38;5;141m",       # Soft cyan
-      messages: "\033[38;5;147m",     # Soft green
-      time: "\033[38;5;220m",         # Soft yellow
-      git_clean: "\033[38;5;154m",    # Soft green
-      git_dirty: "\033[38;5;222m",    # Soft peach/orange
+      directory: "\033[38;5;51m",
+      model: "\033[38;5;105m",
+      daily: "\033[38;5;141m",
+      weekly: "\033[38;5;147m",
+      time: "\033[38;5;220m",
+      git_clean: "\033[38;5;154m",
+      git_dirty: "\033[38;5;222m",
       gray: "\033[90m",
       reset: "\033[0m"
     },
     minimal: {
       directory: "\033[38;5;250m",
       model: "\033[38;5;248m",
-      tokens: "\033[38;5;248m",
-      messages: "\033[38;5;248m",
+      daily: "\033[38;5;248m",
+      weekly: "\033[38;5;248m",
       time: "\033[38;5;248m",
       git_clean: "\033[38;5;248m",
       git_dirty: "\033[38;5;248m",
@@ -94,13 +82,13 @@ class ClaudeStatusLine
       reset: "\033[0m"
     },
     background: {
-      directory: "\033[44m\033[37m",     # Blue bg, white text
-      model: "\033[45m\033[37m",         # Magenta bg, white text
-      tokens: "\033[46m\033[30m",        # Cyan bg, black text
-      messages: "\033[42m\033[30m",      # Green bg, black text
-      time: "\033[43m\033[30m",          # Yellow bg, black text
-      git_clean: "\033[42m\033[37m",           # Bold green
-      git_dirty: "\033[43m\033[37m",           # Bold yellow
+      directory: "\033[44m\033[37m",
+      model: "\033[45m\033[37m",
+      daily: "\033[46m\033[30m",
+      weekly: "\033[42m\033[30m",
+      time: "\033[43m\033[30m",
+      git_clean: "\033[42m\033[37m",
+      git_dirty: "\033[43m\033[37m",
       gray: "\033[90m",
       reset: "\033[0m"
     }
@@ -115,7 +103,6 @@ class ClaudeStatusLine
     @info_mode = (ENV['CLAUDE_STATUS_INFO_MODE']&.to_sym || DEFAULT_INFO_MODE)
     @colors = COLOR_SCHEMES[@display_mode] || COLOR_SCHEMES[DEFAULT_DISPLAY_MODE]
 
-    # Auto-detect plan and set limits
     @plan = self.class.detect_plan
     @limits = self.class.get_limits(@plan)
   end
@@ -145,29 +132,11 @@ class ClaudeStatusLine
     end
   end
 
-  def usage_parts
-    usage = calculate_usage
-    [
-      colorize(usage[:tokens], :tokens),
-      colorize(usage[:messages], :messages),
-      colorize(usage[:reset_time], :time)
-    ]
-  end
-
-  def usage_parts_with_padding
-    usage = calculate_usage
-    [
-      colorize(" #{usage[:tokens]} ", :tokens),
-      colorize(" #{usage[:messages]} ", :messages),
-      colorize(" #{usage[:reset_time]} ", :time)
-    ]
-  end
-
   def usage_parts_with_info
     usage = calculate_usage
     [
-      format_with_info(usage[:tokens], :tokens),
-      format_with_info(usage[:messages], :messages),
+      format_with_info(usage[:daily], :daily),
+      format_with_info(usage[:weekly], :weekly),
       format_with_info(usage[:reset_time], :time)
     ]
   end
@@ -175,8 +144,8 @@ class ClaudeStatusLine
   def usage_parts_with_padding_and_info
     usage = calculate_usage
     [
-      format_with_info_and_padding(usage[:tokens], :tokens),
-      format_with_info_and_padding(usage[:messages], :messages),
+      format_with_info_and_padding(usage[:daily], :daily),
+      format_with_info_and_padding(usage[:weekly], :weekly),
       format_with_info_and_padding(usage[:reset_time], :time)
     ]
   end
@@ -231,12 +200,12 @@ class ClaudeStatusLine
 
   def get_text_suffix(type)
     case type
-    when :tokens
-      " tokens"
-    when :messages
-      " messages"
+    when :daily
+      " daily"
+    when :weekly
+      " weekly"
     when :time
-      " before reset"
+      " reset"
     else
       ""
     end
@@ -257,7 +226,6 @@ class ClaudeStatusLine
         colorize("#{emoji} #{info}", color)
       end
     else
-      # No text suffix for git info as requested
       if @display_mode == :background
         colorize("#{info} ", color)
       else
@@ -303,18 +271,38 @@ class ClaudeStatusLine
     entries = load_usage_entries
     return default_usage if entries.empty?
 
-    blocks = create_session_blocks(entries)
-    current_block = find_active_block(blocks)
-    return default_usage unless current_block
+    now = Time.now
 
-    format_usage_data(current_block)
+    # Calculate daily tokens (last 24 hours)
+    day_ago = now - (24 * 3600)
+    daily_tokens = entries.select { |ts, _| ts >= day_ago }.sum { |_, tokens| tokens }
+
+    # Calculate weekly tokens (last 7 days)
+    week_ago = now - (7 * 24 * 3600)
+    weekly_tokens = entries.select { |ts, _| ts >= week_ago }.sum { |_, tokens| tokens }
+
+    daily_limit = @limits[:daily_tokens]
+    weekly_limit = daily_limit * 7
+
+    daily_pct = ((daily_tokens.to_f / daily_limit) * 100).round(1)
+    weekly_pct = ((weekly_tokens.to_f / weekly_limit) * 100).round(1)
+
+    # Reset time is midnight local time
+    tomorrow = Date.today + 1
+    reset_time = Time.new(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0)
+
+    {
+      daily: "D:#{daily_pct}%",
+      weekly: "W:#{weekly_pct}%",
+      reset_time: "→#{reset_time.strftime("%H:%M")}"
+    }
   end
 
   def load_usage_entries
     project_dir = File.expand_path('~/.claude/projects')
     return [] unless Dir.exist?(project_dir)
 
-    cutoff_time = Time.now - (96 * 3600) # 4 days like Claude Monitor
+    cutoff_time = Time.now - (8 * 24 * 3600) # 8 days for weekly calculation
     processed_hashes = Set.new
     entries = []
 
@@ -344,17 +332,12 @@ class ClaudeStatusLine
   end
 
   def process_jsonl_entry(data, cutoff_time, processed_hashes)
-    # Time filtering
     timestamp = parse_timestamp(data['timestamp'])
     return nil unless timestamp && timestamp >= cutoff_time
 
-    # Deduplication
     hash = unique_hash(data)
-    if hash && processed_hashes.include?(hash)
-      return nil
-    end
+    return nil if hash && processed_hashes.include?(hash)
 
-    # Token extraction and validation
     tokens = extract_tokens(data)
     individual_tokens = tokens.reject { |k, _| k == :total_tokens }
     return nil if individual_tokens.values.all? { |v| v <= 0 }
@@ -428,91 +411,13 @@ class ClaudeStatusLine
     0
   end
 
-  def create_session_blocks(entries)
-    return [] if entries.empty?
-
-    blocks = []
-    current_block = nil
-
-    entries.each do |timestamp, tokens|
-      if new_block_needed?(current_block, timestamp)
-        blocks << current_block if current_block
-        current_block = new_session_block(timestamp)
-      end
-
-      add_to_block(current_block, timestamp, tokens)
-    end
-
-    blocks << current_block if current_block
-    blocks
-  end
-
-  def new_block_needed?(current_block, timestamp)
-    return true unless current_block
-
-    timestamp >= current_block[:end_time] ||
-      (current_block[:last_timestamp] &&
-       (timestamp - current_block[:last_timestamp]) >= SESSION_DURATION_HOURS * 3600)
-  end
-
-  def new_session_block(timestamp)
-    start_time = round_to_hour(timestamp)
-    {
-      start_time: start_time,
-      end_time: start_time + (SESSION_DURATION_HOURS * 3600),
-      total_tokens: 0,
-      message_count: 0,
-      first_timestamp: timestamp,
-      last_timestamp: nil
-    }
-  end
-
-  def add_to_block(block, timestamp, tokens)
-    return unless timestamp >= block[:start_time] && timestamp < block[:end_time]
-
-    block[:total_tokens] += tokens
-    block[:message_count] += 1
-    block[:last_timestamp] = timestamp
-  end
-
-  def round_to_hour(timestamp)
-    utc = timestamp.utc
-    Time.new(utc.year, utc.month, utc.day, utc.hour, 0, 0, 0)
-  end
-
-  def find_active_block(blocks)
-    current_time = Time.now
-
-    # Mark active blocks
-    blocks.each { |block| block[:is_active] = block[:end_time] > current_time }
-
-    # Return first active block (Claude Monitor logic)
-    blocks.find { |block| block[:is_active] } ||
-      blocks.max_by { |block| block[:last_timestamp] || block[:first_timestamp] }
-  end
-
-  def format_usage_data(block)
-    reset_time_local = block[:end_time].localtime
-    reset_display = reset_time_local.strftime("%H:%M")
-
-    {
-      tokens: format_count(block[:total_tokens], @limits[:tokens]),
-      messages: "#{block[:message_count]}/#{@limits[:messages]}".strip,
-      reset_time: "→#{reset_display}"
-    }
-  end
-
-  def format_count(current, limit)
-    percentage = limit > 0 ? ((current.to_f / limit) * 100).round(1) : 0
-    "#{percentage}%"
-  end
-
   def default_usage
-    default_reset = (Time.now + 5 * 3600).localtime.strftime("%H:%M")
+    tomorrow = Date.today + 1
+    reset_time = Time.new(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0)
     {
-      tokens: "0%",
-      messages: "0/1000",
-      reset_time: "→#{default_reset}"
+      daily: "D:0%",
+      weekly: "W:0%",
+      reset_time: "→#{reset_time.strftime("%H:%M")}"
     }
   end
 end
