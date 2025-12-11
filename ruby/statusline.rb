@@ -287,14 +287,10 @@ class ClaudeStatusLine
     daily_pct = ((daily_tokens.to_f / daily_limit) * 100).round(1)
     weekly_pct = ((weekly_tokens.to_f / weekly_limit) * 100).round(1)
 
-    # Calculate reset time (midnight)
-    tomorrow = Date.today + 1
-    reset_time = Time.new(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0)
-
     {
       daily: "D:#{daily_pct}%",
       weekly: "W:#{weekly_pct}%",
-      reset_time: "→#{reset_time.strftime("%H:%M")}"
+      reset_time: "@00:00"
     }
   end
 
